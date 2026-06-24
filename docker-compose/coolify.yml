@@ -1,0 +1,118 @@
+# Blockscout deployment for Coolify.
+#
+# Differences from docker-compose.yml:
+#   - No nginx `proxy` service: Coolify's own reverse proxy (Traefik) terminates
+#     TLS and routes each subdomain to the right container.
+#   - Each public service is exposed via a Coolify "magic" FQDN variable
+#     (SERVICE_FQDN_<SERVICE>_<PORT>), which makes Coolify create the route to
+#     that internal port and issue a certificate.
+#   - Frontend/stats are wired to the public HTTPS subdomains (the frontend runs
+#     in the user's browser, so it cannot use internal container hostnames).
+#
+# Subdomains (point these DNS records at the Coolify host):
+#   explorer.metrixchain.com   -> frontend  (UI)
+#   backend.metrixchain.com    -> backend   (API + websocket)
+#   stats.metrixchain.com      -> stats
+#   visualizer.metrixchain.com -> visualizer
+
+services:
+  redis-db:
+    extends:
+      file: ./services/redis.yml
+      service: redis-db
+
+  db-init:
+    extends:
+      file: ./services/db.yml
+      service: db-init
+
+  db:
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./services/db.yml
+      service: db
+
+  backend:
+    depends_on:
+      - db
+      - redis-db
+    extends:
+      file: ./services/backend.yml
+      service: backend
+    links:
+      - db:database
+    expose:
+      - "4000"
+    environment:
+      # Coolify: route backend.metrixchain.com -> this container's port 4000
+      - SERVICE_FQDN_BACKEND_4000=https://backend.metrixchain.com
+      - BLOCKSCOUT_HOST=backend.metrixchain.com
+      - BLOCKSCOUT_PROTOCOL=https
+      # Allow websocket/API calls coming from the frontend origin
+      - CHECK_ORIGIN=false
+
+  nft_media_handler:
+    depends_on:
+      - backend
+    extends:
+      file: ./services/nft_media_handler.yml
+      service: nft_media_handler
+
+  frontend:
+    depends_on:
+      - backend
+    extends:
+      file: ./services/frontend.yml
+      service: frontend
+    expose:
+      - "3000"
+    environment:
+      # Coolify: route explorer.metrixchain.com -> this container's port 3000.
+      # All NEXT_PUBLIC_* config lives in envs/common-frontend.env.
+      - SERVICE_FQDN_FRONTEND_3000=https://explorer.metrixchain.com
+
+  visualizer:
+    extends:
+      file: ./services/visualizer.yml
+      service: visualizer
+    expose:
+      - "8050"
+    environment:
+      - SERVICE_FQDN_VISUALIZER_8050=https://visualizer.metrixchain.com
+
+  sig-provider:
+    extends:
+      file: ./services/sig-provider.yml
+      service: sig-provider
+
+  stats-db-init:
+    extends:
+      file: ./services/stats.yml
+      service: stats-db-init
+
+  stats-db:
+    depends_on:
+      stats-db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./services/stats.yml
+      service: stats-db
+
+  stats:
+    depends_on:
+      - stats-db
+      - backend
+    extends:
+      file: ./services/stats.yml
+      service: stats
+    expose:
+      - "8050"
+    environment:
+      - SERVICE_FQDN_STATS_8050=https://stats.metrixchain.com
+      # Reach the backend over the internal Docker network
+      - STATS__BLOCKSCOUT_API_URL=http://backend:4000
+      # Allow the browser (explorer subdomain) to call the stats API
+      - STATS__SERVER__HTTP__CORS__ENABLED=true
+      - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=https://explorer.metrixchain.com
