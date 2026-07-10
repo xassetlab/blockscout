@@ -33,12 +33,9 @@ services:
     container_name: 'db'
     command: postgres -c 'max_connections=200' -c 'client_connection_check_interval=60000'
     environment:
-      POSTGRES_DB: 'blockscout'
-      POSTGRES_USER: 'blockscout'
-      POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
-    ports:
-      - target: 5432
-        published: 7432
+      - POSTGRES_DB=blockscout
+      - POSTGRES_USER=blockscout
+      - POSTGRES_PASSWORD=ceWb1MeLBEeOIfk65gU8EjF8
     volumes:
       - blockscout-db-data:/var/lib/postgresql/data
     healthcheck:
@@ -102,12 +99,9 @@ services:
     container_name: 'stats-db'
     command: postgres -c 'max_connections=200'
     environment:
-      POSTGRES_DB: 'stats'
-      POSTGRES_USER: 'stats'
-      POSTGRES_PASSWORD: 'n0uejXPl61ci6ldCuE2gQU5Y'
-    ports:
-      - target: 5432
-        published: 7433
+      - POSTGRES_DB=stats
+      - POSTGRES_USER=stats
+      - POSTGRES_PASSWORD=n0uejXPl61ci6ldCuE2gQU5Y
     volumes:
       - stats-db-data:/var/lib/postgresql/data
     healthcheck:
