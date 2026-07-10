@@ -21,18 +21,32 @@ services:
       file: ./services/redis.yml
       service: redis-db
 
-  db-init:
-    extends:
-      file: ./services/db.yml
-      service: db-init
-
+  # DB is defined inline (not via services/db.yml) so it uses a named Docker
+  # volume and the stock postgres user. This avoids the run-once `db-init`
+  # chown container, which breaks Coolify's `docker compose up --wait`
+  # ("No such container" once the init container exits). Named volumes also let
+  # Coolify's "delete volumes" wipe the DB cleanly on redeploy.
   db:
-    depends_on:
-      db-init:
-        condition: service_completed_successfully
-    extends:
-      file: ./services/db.yml
-      service: db
+    image: postgres:17
+    shm_size: 256m
+    restart: always
+    container_name: 'db'
+    command: postgres -c 'max_connections=200' -c 'client_connection_check_interval=60000'
+    environment:
+      POSTGRES_DB: 'blockscout'
+      POSTGRES_USER: 'blockscout'
+      POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
+    ports:
+      - target: 5432
+        published: 7432
+    volumes:
+      - blockscout-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   backend:
     depends_on:
@@ -80,18 +94,28 @@ services:
       file: ./services/sig-provider.yml
       service: sig-provider
 
-  stats-db-init:
-    extends:
-      file: ./services/stats.yml
-      service: stats-db-init
-
+  # Inline (see the `db` note above): named volume + stock postgres, no init.
   stats-db:
-    depends_on:
-      stats-db-init:
-        condition: service_completed_successfully
-    extends:
-      file: ./services/stats.yml
-      service: stats-db
+    image: postgres:17
+    shm_size: 256m
+    restart: always
+    container_name: 'stats-db'
+    command: postgres -c 'max_connections=200'
+    environment:
+      POSTGRES_DB: 'stats'
+      POSTGRES_USER: 'stats'
+      POSTGRES_PASSWORD: 'n0uejXPl61ci6ldCuE2gQU5Y'
+    ports:
+      - target: 5432
+        published: 7433
+    volumes:
+      - stats-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   stats:
     depends_on:
@@ -109,3 +133,7 @@ services:
       # Allow the browser (explorer subdomain) to call the stats API
       - STATS__SERVER__HTTP__CORS__ENABLED=true
       - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=https://explorer.metrixchain.com
+
+volumes:
+  blockscout-db-data:
+  stats-db-data:
