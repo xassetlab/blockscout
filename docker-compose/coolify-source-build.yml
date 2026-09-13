@@ -12,10 +12,26 @@
 #   - backend is built (docker-compose/services/backend-source-build.yml)
 #     instead of pulling a prebuilt image; everything else (frontend,
 #     visualizer, sig-provider, stats) still pulls prebuilt images, unchanged.
-#   - No custom domains. `SERVICE_FQDN_*` below is left bare (no `=value`),
-#     which tells Coolify to generate its own *.sslip.io URL for each public
-#     service and wire the Traefik routing — same mechanism
-#     metrix-backend/docker-compose.coolify.yml already uses for SERVICE_FQDN_METRIX_3000.
+#   - Domains: use a real domain routed through Cloudflare (or any proxy that
+#     terminates TLS itself), NOT Coolify's auto-generated *.sslip.io ones.
+#     `SERVICE_FQDN_*` below being left bare (no `=value`) works either way —
+#     it just tells Coolify to wire Traefik routing for whatever domain the
+#     resource is configured with — but the bare *.sslip.io domains Coolify
+#     generates by default left this deployment stuck behind Traefik
+#     returning 503 "no available server" for ~4 hours across every redeploy,
+#     even though the backend/frontend containers were themselves genuinely
+#     healthy the whole time (confirmed via container logs, which showed
+#     clean startup and, for backend, live indexing activity). The TLS
+#     handshake for those domains presented an untrusted certificate
+#     (`unable to get local issuer certificate` / `DEPTH_ZERO_SELF_SIGNED_CERT`
+#     even on server-to-server requests inside the frontend container),
+#     pointing at a stuck Let's Encrypt/ACME issuance for that domain that
+#     never resolved on its own. Pointing a real domain at this resource
+#     through Cloudflare instead — Cloudflare terminates TLS at its own edge,
+#     so Traefik's own cert issuance for the origin is no longer on the
+#     critical path — fixed it immediately, no further Coolify-side changes
+#     needed. If reusing this file for a new deployment, set up the custom
+#     domain from the start rather than starting on the generated one.
 #     BLOCKSCOUT_HOST is still left unset on backend — it only affects a few
 #     self-referential URLs in some API JSON responses (config/runtime.exs),
 #     defaults to "localhost", cosmetic only. The backend's own API CORS also
@@ -26,24 +42,24 @@
 #     can't hardcode this instance's domain (would break production, or vice
 #     versa) — it reads BACKEND_HOST/EXPLORER_HOST/STATS_HOST/VISUALIZER_HOST
 #     via Compose variable substitution instead, falling back to production's
-#     metrixchain.com domains when unset. Bootstrap in two steps because
-#     Coolify only generates the SERVICE_FQDN_* domains once this file is
-#     first deployed — there's no way to know them ahead of time:
+#     metrixchain.com domains when unset. Bootstrap in two steps because the
+#     exact domains (custom or Coolify-generated) aren't known until this
+#     resource is configured with them in Coolify:
 #       1. Deploy once with these four required vars still unset (Compose
-#          will refuse — that's expected). Or, if already deployed and the
-#          domains are already generated, check the application's resolved
-#          domains for the exact bare hostnames.
+#          will refuse — that's expected), just to get the resource created,
+#          then attach the real domains to it (Server/Domains, or the
+#          resource's own domain field) in the Coolify UI.
 #       2. Set BACKEND_HOST / EXPLORER_HOST / STATS_HOST / VISUALIZER_HOST in
 #          this Coolify resource's env vars to those bare hostnames (no
 #          scheme, no port) and redeploy.
 #     For this specific already-deployed resource (uuid
-#     rtga7pok9ym8rffzgjkkyldh, server 2.25.132.235), those are:
-#       BACKEND_HOST=backend-rtga7pok9ym8rffzgjkkyldh.2.25.132.235.sslip.io
-#       EXPLORER_HOST=frontend-rtga7pok9ym8rffzgjkkyldh.2.25.132.235.sslip.io
-#       STATS_HOST=stats-rtga7pok9ym8rffzgjkkyldh.2.25.132.235.sslip.io
-#       VISUALIZER_HOST=visualizer-rtga7pok9ym8rffzgjkkyldh.2.25.132.235.sslip.io
-#     Also lets stats' CORS allowlist use the real frontend origin instead of
-#     the `*` wildcard this file used before this was wired up.
+#     rtga7pok9ym8rffzgjkkyldh), those are, since switching to Cloudflare:
+#       BACKEND_HOST=backend.nexusmedical.qzz.io
+#       EXPLORER_HOST=explorer.nexusmedical.qzz.io
+#       STATS_HOST=stats.nexusmedical.qzz.io
+#       VISUALIZER_HOST=visualizer.nexusmedical.qzz.io
+#     This also lets stats' CORS allowlist use the real frontend origin
+#     instead of the `*` wildcard this file used before this was wired up.
 #   - DB/stats-db passwords below are placeholders for a fresh instance; if
 #     this second instance is meant to serve the SAME data as production,
 #     point DATABASE_URL (in envs/common-blockscout.env) at the existing DB
@@ -110,11 +126,13 @@ services:
     expose:
       - "4000"
     environment:
-      # Bare (no value): Coolify generates a *.sslip.io URL for this
-      # service:port and routes it via Traefik.
+      # Bare (no value): Coolify wires Traefik routing for whatever domain
+      # this resource is configured with — see the file header for why that
+      # should be a real domain (e.g. via Cloudflare), not the *.sslip.io
+      # default.
       - SERVICE_FQDN_BACKEND_4000
-      # Websocket/API calls come from whatever domain Coolify generated for
-      # the frontend, which BLOCKSCOUT_HOST can't know ahead of time anyway.
+      # Websocket/API calls come from whatever domain the frontend ends up
+      # on, which BLOCKSCOUT_HOST can't know ahead of time anyway.
       - CHECK_ORIGIN=false
       # env_file (../envs/common-blockscout.env, shared with production's
       # coolify.yml) hardcodes DATABASE_URL with PRODUCTION's db password.
