@@ -4,7 +4,10 @@ services:
   frontend:
     image: ghcr.io/blockscout/frontend:${FRONTEND_DOCKER_TAG:-latest}
     pull_policy: always
-    platform: linux/amd64
+    # No explicit platform: ghcr.io/blockscout/frontend publishes both
+    # linux/amd64 and linux/arm64 — let Docker pick the one matching the
+    # host instead of forcing amd64, which fails with "exec format error"
+    # on an arm64 host (e.g. Oracle Cloud's Ampere A1 instances).
     restart: always
     container_name: 'frontend'
     env_file:
