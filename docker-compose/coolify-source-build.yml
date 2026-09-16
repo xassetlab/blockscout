@@ -143,6 +143,21 @@ services:
       # instantly and unconditionally, regardless of db/redis readiness or
       # migration state (confirmed by reproducing the crash locally).
       - DATABASE_URL=postgresql://blockscout:${POSTGRES_PASSWORD}@db:5432/blockscout
+      # Optional — point this deployment at a different chain node than
+      # production's. Both default to the value already baked into
+      # envs/common-blockscout.env, so omitting these changes nothing.
+      # Referenced explicitly here (not just left to the env_file default)
+      # because that's the only pattern confirmed to make a Coolify-UI env
+      # var reliably available to Compose's own variable substitution — see
+      # BACKEND_HOST above.
+      # For a Besu network running on THIS SAME Coolify server: use
+      # http://host.docker.internal:8545/ and ws://host.docker.internal:8546/
+      # (extra_hosts in services/backend-source-build.yml already maps
+      # host.docker.internal to the host gateway) rather than the node's
+      # public IP — same-machine traffic that never leaves the host, so it
+      # doesn't depend on the host's firewall being open to itself.
+      - CHAIN_RPC_URL=${CHAIN_RPC_URL:-http://95.217.216.219:8545/}
+      - CHAIN_RPC_WS_URL=${CHAIN_RPC_WS_URL:-}
 
   frontend:
     depends_on:
