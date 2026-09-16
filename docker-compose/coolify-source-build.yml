@@ -113,7 +113,7 @@ services:
       - SERVICE_PASSWORD_POSTGRES
       - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
     volumes:
-      - blockscout-db-data-v2:/var/lib/postgresql/data
+      - blockscout-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
       interval: 10s
@@ -224,7 +224,7 @@ services:
       - SERVICE_PASSWORD_STATS_DB
       - POSTGRES_PASSWORD=${SERVICE_PASSWORD_STATS_DB}
     volumes:
-      - stats-db-data-v2:/var/lib/postgresql/data
+      - stats-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
       interval: 10s
@@ -260,5 +260,5 @@ volumes:
   # ever confirmed ready). Renaming forces Compose to create a genuinely
   # fresh, empty volume instead of reusing that corrupted one; the old
   # volume is simply orphaned, not deleted, no destructive action needed here.
-  blockscout-db-data-v2:
-  stats-db-data-v2:
+  blockscout-db-data:
+  stats-db-data:
