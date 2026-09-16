@@ -217,14 +217,17 @@ services:
     environment:
       - POSTGRES_DB=stats
       - POSTGRES_USER=stats
-      # Bare: same Coolify-generated, alphanumeric-only password mechanism
-      # as SERVICE_PASSWORD_POSTGRES above (different identifier, so a
-      # different generated value — this db and blockscout's need distinct
-      # passwords).
-      - SERVICE_PASSWORD_STATS_DB
-      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_STATS_DB}
+      # Fixed literal instead of the SERVICE_PASSWORD_STATS_DB magic var:
+      # that var generated empty on this deployment (coollabsio/coolify#4646
+      # — magic password vars occasionally fail to generate), so stats-db's
+      # Postgres entrypoint kept refusing to init ("superuser password is
+      # not specified") even after regenerating it in the Coolify UI.
+      # Alphanumeric-only (see the comment on SERVICE_PASSWORD_POSTGRES
+      # above for why that matters to Explorer.Repo.ConfigHelper's regex) —
+      # generated locally, not reused from anywhere else.
+      - POSTGRES_PASSWORD=WWjGariL9Wf0LprKOsHGl9L4FLSzztfD
     volumes:
-      - stats-db-data-v3:/var/lib/postgresql/data
+      - stats-db-data-v4:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
       interval: 10s
@@ -247,8 +250,9 @@ services:
       - STATS__BLOCKSCOUT_API_URL=http://backend:4000
       # services/stats.yml's own defaults hardcode PRODUCTION's db/stats-db
       # passwords (same class of bug as backend's DATABASE_URL above) —
-      # override both to match this instance's own generated passwords.
-      - STATS__DB_URL=postgres://stats:${SERVICE_PASSWORD_STATS_DB}@stats-db:5432/stats
+      # override both to match this instance's own passwords. stats-db's is
+      # a fixed literal now — see the comment on stats-db's POSTGRES_PASSWORD.
+      - STATS__DB_URL=postgres://stats:WWjGariL9Wf0LprKOsHGl9L4FLSzztfD@stats-db:5432/stats
       - STATS__BLOCKSCOUT_DB_URL=postgresql://blockscout:${SERVICE_PASSWORD_POSTGRES}@db:5432/blockscout
       - STATS__SERVER__HTTP__CORS__ENABLED=true
       - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=https://${EXPLORER_HOST:?set EXPLORER_HOST in Coolify env vars — see this file's header comment}
@@ -267,13 +271,14 @@ volumes:
   #     got killed mid-run, repeatedly, before Postgres/Redis were ever
   #     confirmed ready). Currently on the plain name again — healthy, in use,
   #     do not rename this one without a reason.
-  #   - stats-db-data-v3: SERVICE_PASSWORD_STATS_DB generated as an empty
-  #     value on first deploy (a known Coolify bug — magic password vars
-  #     occasionally fail to generate: coollabsio/coolify#4646), so
-  #     stats-db's first boot failed Postgres's own "superuser password not
-  #     specified" check before ever writing anything — renamed on the
-  #     retry (after fixing the password in Coolify's UI) mainly for a
-  #     guaranteed-clean slate, since a failed initdb can still leave stray
-  #     files behind.
+  #   - stats-db-data-v3, then -v4: SERVICE_PASSWORD_STATS_DB generated as an
+  #     empty value (a known Coolify bug — magic password vars occasionally
+  #     fail to generate: coollabsio/coolify#4646), so stats-db's Postgres
+  #     entrypoint kept refusing to init ("superuser password is not
+  #     specified") — first attempt to fix it by regenerating the var in
+  #     Coolify's UI didn't stick, so stats-db's POSTGRES_PASSWORD is now a
+  #     fixed literal instead (see that service's own comment) and the
+  #     volume bumped again for a guaranteed-clean slate, since a failed
+  #     initdb can still leave stray files behind.
   blockscout-db-data:
-  stats-db-data-v3:
+  stats-db-data-v4:
