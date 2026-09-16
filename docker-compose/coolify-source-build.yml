@@ -60,10 +60,16 @@
 #       VISUALIZER_HOST=visualizer.nexusmedical.qzz.io
 #     This also lets stats' CORS allowlist use the real frontend origin
 #     instead of the `*` wildcard this file used before this was wired up.
-#   - DB/stats-db passwords below are placeholders for a fresh instance; if
-#     this second instance is meant to serve the SAME data as production,
-#     point DATABASE_URL (in envs/common-blockscout.env) at the existing DB
-#     instead of standing up a new one.
+#   - DB/stats-db passwords: SERVICE_PASSWORD_POSTGRES / SERVICE_PASSWORD_STATS_DB
+#     are Coolify's own magic vars (bare declarations below) — it generates
+#     and persists an alphanumeric-only password for each the first time this
+#     file is deployed, no action needed. Alphanumeric-only isn't just tidy:
+#     Explorer.Repo.ConfigHelper's DATABASE_URL parser only accepts
+#     [a-zA-Z0-9\-*#!%^&$_.] in the password position and crashes hard,
+#     confusingly, on anything else — see the comment on SERVICE_PASSWORD_POSTGRES
+#     below. If this second instance is meant to serve the SAME data as
+#     production instead of a fresh DB, point DATABASE_URL (in
+#     envs/common-blockscout.env) at the existing DB instead.
 #
 # Once this proves out, promote it: rename to coolify.yml (replacing the
 # prebuilt-image version) or merge the two, and this repo's default deploy
@@ -94,7 +100,18 @@ services:
     environment:
       - POSTGRES_DB=blockscout
       - POSTGRES_USER=blockscout
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set a fresh password in Coolify env vars}
+      # Bare: Coolify generates this once (Str::password(symbols: false) —
+      # alphanumeric only, no punctuation) and persists it across redeploys.
+      # Alphanumeric-only matters here specifically: Explorer.Repo.ConfigHelper
+      # parses DATABASE_URL with a regex whose password character class is
+      # [a-zA-Z0-9\-*#!%^&$_.] (apps/explorer/lib/explorer/repo/config_helper.ex)
+      # — anything outside that set makes the regex fail to match at all, and
+      # the app crashes hard on boot (Protocol.UndefinedError, Enumerable not
+      # implemented for Atom) instead of a clear "bad password" error.
+      # A hand-picked password risks hitting that; letting Coolify generate
+      # this one avoids the whole class of failure by construction.
+      - SERVICE_PASSWORD_POSTGRES
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
     volumes:
       - blockscout-db-data-v2:/var/lib/postgresql/data
     healthcheck:
@@ -137,12 +154,12 @@ services:
       # env_file (../envs/common-blockscout.env, shared with production's
       # coolify.yml) hardcodes DATABASE_URL with PRODUCTION's db password.
       # `environment:` here wins over `env_file:` for the same key, so this
-      # overrides it to match whatever POSTGRES_PASSWORD this instance's own
-      # `db` was actually created with — without this override, every
-      # connection attempt gets rejected with FATAL 28P01 invalid_password,
-      # instantly and unconditionally, regardless of db/redis readiness or
-      # migration state (confirmed by reproducing the crash locally).
-      - DATABASE_URL=postgresql://blockscout:${POSTGRES_PASSWORD}@db:5432/blockscout
+      # overrides it to match whatever password this instance's own `db` was
+      # actually created with — without this override, every connection
+      # attempt gets rejected with FATAL 28P01 invalid_password, instantly
+      # and unconditionally, regardless of db/redis readiness or migration
+      # state (confirmed by reproducing the crash locally).
+      - DATABASE_URL=postgresql://blockscout:${SERVICE_PASSWORD_POSTGRES}@db:5432/blockscout
       # Optional — point this deployment at a different chain node than
       # production's. Both default to the value already baked into
       # envs/common-blockscout.env, so omitting these changes nothing.
@@ -200,7 +217,12 @@ services:
     environment:
       - POSTGRES_DB=stats
       - POSTGRES_USER=stats
-      - POSTGRES_PASSWORD=${STATS_POSTGRES_PASSWORD:?set a fresh password in Coolify env vars}
+      # Bare: same Coolify-generated, alphanumeric-only password mechanism
+      # as SERVICE_PASSWORD_POSTGRES above (different identifier, so a
+      # different generated value — this db and blockscout's need distinct
+      # passwords).
+      - SERVICE_PASSWORD_STATS_DB
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_STATS_DB}
     volumes:
       - stats-db-data-v2:/var/lib/postgresql/data
     healthcheck:
@@ -225,9 +247,9 @@ services:
       - STATS__BLOCKSCOUT_API_URL=http://backend:4000
       # services/stats.yml's own defaults hardcode PRODUCTION's db/stats-db
       # passwords (same class of bug as backend's DATABASE_URL above) —
-      # override both to match this instance's own required passwords.
-      - STATS__DB_URL=postgres://stats:${STATS_POSTGRES_PASSWORD}@stats-db:5432/stats
-      - STATS__BLOCKSCOUT_DB_URL=postgresql://blockscout:${POSTGRES_PASSWORD}@db:5432/blockscout
+      # override both to match this instance's own generated passwords.
+      - STATS__DB_URL=postgres://stats:${SERVICE_PASSWORD_STATS_DB}@stats-db:5432/stats
+      - STATS__BLOCKSCOUT_DB_URL=postgresql://blockscout:${SERVICE_PASSWORD_POSTGRES}@db:5432/blockscout
       - STATS__SERVER__HTTP__CORS__ENABLED=true
       - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=https://${EXPLORER_HOST:?set EXPLORER_HOST in Coolify env vars — see this file's header comment}
 
