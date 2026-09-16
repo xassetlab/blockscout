@@ -224,7 +224,7 @@ services:
       - SERVICE_PASSWORD_STATS_DB
       - POSTGRES_PASSWORD=${SERVICE_PASSWORD_STATS_DB}
     volumes:
-      - stats-db-data:/var/lib/postgresql/data
+      - stats-db-data-v3:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
       interval: 10s
@@ -254,11 +254,26 @@ services:
       - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=https://${EXPLORER_HOST:?set EXPLORER_HOST in Coolify env vars — see this file's header comment}
 
 volumes:
-  # -v2: the original blockscout-db-data volume accumulated a half-migrated
-  # schema from the crash-loop before the depends_on fix above (backend's
-  # migration task got killed mid-run, repeatedly, before Postgres/Redis were
-  # ever confirmed ready). Renaming forces Compose to create a genuinely
-  # fresh, empty volume instead of reusing that corrupted one; the old
-  # volume is simply orphaned, not deleted, no destructive action needed here.
+  # To force a genuinely fresh, empty volume for one of these DBs (the safe
+  # way — no SSH, no `docker volume rm`, no risk of touching the wrong one):
+  # bump the name below AND the matching `volumes:` line on that db service
+  # (e.g. stats-db-data -> stats-db-data-v4). Compose treats a new name as a
+  # new volume; the old one is simply orphaned on the host, not deleted, so
+  # nothing is lost if the rename turns out to be unnecessary. Two things
+  # this has already been used for:
+  #   - blockscout-db-data: was blockscout-db-data-v2 for a while, after the
+  #     original volume accumulated a half-migrated schema from the
+  #     crash-loop before the depends_on fix above (backend's migration task
+  #     got killed mid-run, repeatedly, before Postgres/Redis were ever
+  #     confirmed ready). Currently on the plain name again — healthy, in use,
+  #     do not rename this one without a reason.
+  #   - stats-db-data-v3: SERVICE_PASSWORD_STATS_DB generated as an empty
+  #     value on first deploy (a known Coolify bug — magic password vars
+  #     occasionally fail to generate: coollabsio/coolify#4646), so
+  #     stats-db's first boot failed Postgres's own "superuser password not
+  #     specified" check before ever writing anything — renamed on the
+  #     retry (after fixing the password in Coolify's UI) mainly for a
+  #     guaranteed-clean slate, since a failed initdb can still leave stray
+  #     files behind.
   blockscout-db-data:
-  stats-db-data:
+  stats-db-data-v3:
