@@ -7,7 +7,7 @@ version: '3.9'
 # não publica há cerca de um ano), e recursos usados hoje só existem a partir da
 # v10.0.0 — por exemplo o auth de admin (API_SENSITIVE_ENDPOINTS_KEY) só passou a
 # aceitar a chave via header x-api-key na v10.0.0; na v9.0.2 ele só lê
-# ?api_key=... na query string. O HEAD deste repositório é v11.2.1.
+# ?api_key=... na query string. O HEAD deste repositório é v11.3.1.
 #
 # Build args replicados de .github/workflows/release-default.yml (o workflow
 # oficial que publica a imagem "default"/genérica, sem customização de chain) —
@@ -21,8 +21,8 @@ services:
       context: ../..
       dockerfile: docker/Dockerfile
       args:
-        RELEASE_VERSION: '11.2.1'
-        BLOCKSCOUT_VERSION: 'v11.2.1'
+        RELEASE_VERSION: '11.3.1'
+        BLOCKSCOUT_VERSION: 'v11.3.1'
         DECODE_NOT_A_CONTRACT_CALLS: 'false'
         MIXPANEL_URL: ''
         MIXPANEL_TOKEN: ''
