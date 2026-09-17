@@ -1,0 +1,289 @@
+# Blockscout deployment for Coolify — backend and frontend built FROM SOURCE
+# instead of pulled from ghcr.io/blockscout/blockscout and
+# ghcr.io/blockscout/frontend.
+#
+# Why: ghcr.io/blockscout/blockscout is stuck at v9.0.2 (no publish in ~1
+# year). Things this project already relies on only exist from v10.0.0+ — e.g.
+# the admin auth (API_SENSITIVE_ENDPOINTS_KEY) only accepts the key via the
+# x-api-key header starting v10.0.0; on v9.0.2 it's query-string-only
+# (?api_key=...). HEAD of this repo is v11.2.1 (see mix.exs).
+#
+# This is meant to run as a SEPARATE Coolify resource/instance from the one
+# using coolify.yml — same architecture, but:
+#   - backend is built (docker-compose/services/backend-source-build.yml)
+#     from this repo, and frontend is built
+#     (docker-compose/services/frontend-source-build.yml) from
+#     github.com/blockscout/frontend (a separate repo — Compose/BuildKit
+#     support a remote git URL as build.context directly, no submodule
+#     needed); visualizer and sig-provider still pull prebuilt images,
+#     unchanged (no source-build need identified for those yet).
+#   - Domains: use a real domain routed through Cloudflare (or any proxy that
+#     terminates TLS itself), NOT Coolify's auto-generated *.sslip.io ones.
+#     `SERVICE_FQDN_*` below being left bare (no `=value`) works either way —
+#     it just tells Coolify to wire Traefik routing for whatever domain the
+#     resource is configured with — but the bare *.sslip.io domains Coolify
+#     generates by default left this deployment stuck behind Traefik
+#     returning 503 "no available server" for ~4 hours across every redeploy,
+#     even though the backend/frontend containers were themselves genuinely
+#     healthy the whole time (confirmed via container logs, which showed
+#     clean startup and, for backend, live indexing activity). The TLS
+#     handshake for those domains presented an untrusted certificate
+#     (`unable to get local issuer certificate` / `DEPTH_ZERO_SELF_SIGNED_CERT`
+#     even on server-to-server requests inside the frontend container),
+#     pointing at a stuck Let's Encrypt/ACME issuance for that domain that
+#     never resolved on its own. Pointing a real domain at this resource
+#     through Cloudflare instead — Cloudflare terminates TLS at its own edge,
+#     so Traefik's own cert issuance for the origin is no longer on the
+#     critical path — fixed it immediately, no further Coolify-side changes
+#     needed. If reusing this file for a new deployment, set up the custom
+#     domain from the start rather than starting on the generated one.
+#     BLOCKSCOUT_HOST is still left unset on backend — it only affects a few
+#     self-referential URLs in some API JSON responses (config/runtime.exs),
+#     defaults to "localhost", cosmetic only. The backend's own API CORS also
+#     needs nothing here: it has no origin allowlist in prod builds
+#     (BlockScoutWeb.Endpoint's @cors_plug_options only restricts origin in
+#     Mix.env() == :dev), wide open regardless of the frontend's domain.
+#   - envs/common-frontend.env is SHARED with production's coolify.yml, so it
+#     can't hardcode this instance's domain (would break production, or vice
+#     versa) — it reads BACKEND_HOST/EXPLORER_HOST/STATS_HOST/VISUALIZER_HOST
+#     via Compose variable substitution instead, falling back to production's
+#     metrixchain.com domains when unset. Bootstrap in two steps because the
+#     exact domains (custom or Coolify-generated) aren't known until this
+#     resource is configured with them in Coolify:
+#       1. Deploy once with these four required vars still unset (Compose
+#          will refuse — that's expected), just to get the resource created,
+#          then attach the real domains to it (Server/Domains, or the
+#          resource's own domain field) in the Coolify UI.
+#       2. Set BACKEND_HOST / EXPLORER_HOST / STATS_HOST / VISUALIZER_HOST in
+#          this Coolify resource's env vars to those bare hostnames (no
+#          scheme, no port) and redeploy.
+#     For this specific already-deployed resource (uuid
+#     rtga7pok9ym8rffzgjkkyldh), those are, since switching to Cloudflare:
+#       BACKEND_HOST=backend.nexusmedical.qzz.io
+#       EXPLORER_HOST=explorer.nexusmedical.qzz.io
+#       STATS_HOST=stats.nexusmedical.qzz.io
+#       VISUALIZER_HOST=visualizer.nexusmedical.qzz.io
+#     This also lets stats' CORS allowlist use the real frontend origin
+#     instead of the `*` wildcard this file used before this was wired up.
+#   - DB/stats-db passwords: SERVICE_PASSWORD_POSTGRES / SERVICE_PASSWORD_STATS_DB
+#     are Coolify's own magic vars (bare declarations below) — it generates
+#     and persists an alphanumeric-only password for each the first time this
+#     file is deployed, no action needed. Alphanumeric-only isn't just tidy:
+#     Explorer.Repo.ConfigHelper's DATABASE_URL parser only accepts
+#     [a-zA-Z0-9\-*#!%^&$_.] in the password position and crashes hard,
+#     confusingly, on anything else — see the comment on SERVICE_PASSWORD_POSTGRES
+#     below. If this second instance is meant to serve the SAME data as
+#     production instead of a fresh DB, point DATABASE_URL (in
+#     envs/common-blockscout.env) at the existing DB instead.
+#
+# Once this proves out, promote it: rename to coolify.yml (replacing the
+# prebuilt-image version) or merge the two, and this repo's default deploy
+# path builds from source going forward.
+
+services:
+  redis-db:
+    extends:
+      file: ./services/redis.yml
+      service: redis-db
+    # redis.yml doesn't define one, and plain `depends_on: - redis-db` below
+    # only waits for the container to START, not for redis-server to actually
+    # accept connections — harmless on coolify.yml's long-lived prod instance,
+    # but a real race against a genuinely fresh redis-db on first boot here.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  db:
+    image: postgres:17
+    shm_size: 256m
+    restart: always
+    container_name: 'db'
+    command: postgres -c 'max_connections=200' -c 'client_connection_check_interval=60000'
+    environment:
+      - POSTGRES_DB=blockscout
+      - POSTGRES_USER=blockscout
+      # Bare: Coolify generates this once (Str::password(symbols: false) —
+      # alphanumeric only, no punctuation) and persists it across redeploys.
+      # Alphanumeric-only matters here specifically: Explorer.Repo.ConfigHelper
+      # parses DATABASE_URL with a regex whose password character class is
+      # [a-zA-Z0-9\-*#!%^&$_.] (apps/explorer/lib/explorer/repo/config_helper.ex)
+      # — anything outside that set makes the regex fail to match at all, and
+      # the app crashes hard on boot (Protocol.UndefinedError, Enumerable not
+      # implemented for Atom) instead of a clear "bad password" error.
+      # A hand-picked password risks hitting that; letting Coolify generate
+      # this one avoids the whole class of failure by construction.
+      - SERVICE_PASSWORD_POSTGRES
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
+    volumes:
+      - blockscout-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    depends_on:
+      # Plain `depends_on: - db` (what coolify.yml uses) only waits for the
+      # container to start, not for Postgres/Redis to actually accept
+      # connections. backend's command runs a DB migration immediately
+      # (`Explorer.ReleaseTasks.create_and_migrate()`) with no connection
+      # retry of its own — on a brand-new db/redis-db booting for the first
+      # time, that race loses often enough to crash-loop the whole stack.
+      # Production's coolify.yml never hits this because its db has been
+      # up for a long time by the point backend ever restarts.
+      db:
+        condition: service_healthy
+      redis-db:
+        condition: service_healthy
+    extends:
+      file: ./services/backend-source-build.yml
+      service: backend
+    links:
+      - db:database
+    expose:
+      - "4000"
+    environment:
+      # Bare (no value): Coolify wires Traefik routing for whatever domain
+      # this resource is configured with — see the file header for why that
+      # should be a real domain (e.g. via Cloudflare), not the *.sslip.io
+      # default.
+      - SERVICE_FQDN_BACKEND_4000
+      # Websocket/API calls come from whatever domain the frontend ends up
+      # on, which BLOCKSCOUT_HOST can't know ahead of time anyway.
+      - CHECK_ORIGIN=false
+      # env_file (../envs/common-blockscout.env, shared with production's
+      # coolify.yml) hardcodes DATABASE_URL with PRODUCTION's db password.
+      # `environment:` here wins over `env_file:` for the same key, so this
+      # overrides it to match whatever password this instance's own `db` was
+      # actually created with — without this override, every connection
+      # attempt gets rejected with FATAL 28P01 invalid_password, instantly
+      # and unconditionally, regardless of db/redis readiness or migration
+      # state (confirmed by reproducing the crash locally).
+      - DATABASE_URL=postgresql://blockscout:${SERVICE_PASSWORD_POSTGRES}@db:5432/blockscout
+      # Optional — point this deployment at a different chain node than
+      # production's. Both default to the value already baked into
+      # envs/common-blockscout.env, so omitting these changes nothing.
+      # Referenced explicitly here (not just left to the env_file default)
+      # because that's the only pattern confirmed to make a Coolify-UI env
+      # var reliably available to Compose's own variable substitution — see
+      # BACKEND_HOST above.
+      # For a Besu network running on THIS SAME Coolify server: use
+      # http://host.docker.internal:8545/ and ws://host.docker.internal:8546/
+      # (extra_hosts in services/backend-source-build.yml already maps
+      # host.docker.internal to the host gateway) rather than the node's
+      # public IP — same-machine traffic that never leaves the host, so it
+      # doesn't depend on the host's firewall being open to itself.
+      - CHAIN_RPC_URL=${CHAIN_RPC_URL:-http://95.217.216.219:8545/}
+      - CHAIN_RPC_WS_URL=${CHAIN_RPC_WS_URL:-}
+
+  frontend:
+    depends_on:
+      - backend
+    extends:
+      file: ./services/frontend-source-build.yml
+      service: frontend
+    expose:
+      - "3000"
+    environment:
+      - SERVICE_FQDN_FRONTEND_3000
+      # envs/common-frontend.env (shared with production) reads these via
+      # Compose variable substitution to build NEXT_PUBLIC_API_HOST etc. —
+      # see the file header for how to find the right values.
+      - BACKEND_HOST=${BACKEND_HOST:?set BACKEND_HOST in Coolify env vars — see this file's header comment}
+      - EXPLORER_HOST=${EXPLORER_HOST:?set EXPLORER_HOST in Coolify env vars — see this file's header comment}
+      - STATS_HOST=${STATS_HOST:?set STATS_HOST in Coolify env vars — see this file's header comment}
+      - VISUALIZER_HOST=${VISUALIZER_HOST:?set VISUALIZER_HOST in Coolify env vars — see this file's header comment}
+
+  visualizer:
+    extends:
+      file: ./services/visualizer.yml
+      service: visualizer
+    expose:
+      - "8050"
+    environment:
+      - SERVICE_FQDN_VISUALIZER_8050
+
+  sig-provider:
+    extends:
+      file: ./services/sig-provider.yml
+      service: sig-provider
+
+  stats-db:
+    image: postgres:17
+    shm_size: 256m
+    restart: always
+    container_name: 'stats-db'
+    command: postgres -c 'max_connections=200'
+    environment:
+      - POSTGRES_DB=stats
+      - POSTGRES_USER=stats
+      # Fixed literal instead of the SERVICE_PASSWORD_STATS_DB magic var:
+      # that var generated empty on this deployment (coollabsio/coolify#4646
+      # — magic password vars occasionally fail to generate), so stats-db's
+      # Postgres entrypoint kept refusing to init ("superuser password is
+      # not specified") even after regenerating it in the Coolify UI.
+      # Alphanumeric-only (see the comment on SERVICE_PASSWORD_POSTGRES
+      # above for why that matters to Explorer.Repo.ConfigHelper's regex) —
+      # generated locally, not reused from anywhere else.
+      - POSTGRES_PASSWORD=WWjGariL9Wf0LprKOsHGl9L4FLSzztfD
+    volumes:
+      - stats-db-data-v4:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  stats:
+    depends_on:
+      - stats-db
+      - backend
+    extends:
+      file: ./services/stats.yml
+      service: stats
+    expose:
+      - "8050"
+    environment:
+      - SERVICE_FQDN_STATS_8050
+      # Reach the backend over the internal Docker network
+      - STATS__BLOCKSCOUT_API_URL=http://backend:4000
+      # services/stats.yml's own defaults hardcode PRODUCTION's db/stats-db
+      # passwords (same class of bug as backend's DATABASE_URL above) —
+      # override both to match this instance's own passwords. stats-db's is
+      # a fixed literal now — see the comment on stats-db's POSTGRES_PASSWORD.
+      - STATS__DB_URL=postgres://stats:WWjGariL9Wf0LprKOsHGl9L4FLSzztfD@stats-db:5432/stats
+      - STATS__BLOCKSCOUT_DB_URL=postgresql://blockscout:${SERVICE_PASSWORD_POSTGRES}@db:5432/blockscout
+      - STATS__SERVER__HTTP__CORS__ENABLED=true
+      - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=https://${EXPLORER_HOST:?set EXPLORER_HOST in Coolify env vars — see this file's header comment}
+
+volumes:
+  # To force a genuinely fresh, empty volume for one of these DBs (the safe
+  # way — no SSH, no `docker volume rm`, no risk of touching the wrong one):
+  # bump the name below AND the matching `volumes:` line on that db service
+  # (e.g. stats-db-data -> stats-db-data-v4). Compose treats a new name as a
+  # new volume; the old one is simply orphaned on the host, not deleted, so
+  # nothing is lost if the rename turns out to be unnecessary. Two things
+  # this has already been used for:
+  #   - blockscout-db-data: was blockscout-db-data-v2 for a while, after the
+  #     original volume accumulated a half-migrated schema from the
+  #     crash-loop before the depends_on fix above (backend's migration task
+  #     got killed mid-run, repeatedly, before Postgres/Redis were ever
+  #     confirmed ready). Currently on the plain name again — healthy, in use,
+  #     do not rename this one without a reason.
+  #   - stats-db-data-v3, then -v4: SERVICE_PASSWORD_STATS_DB generated as an
+  #     empty value (a known Coolify bug — magic password vars occasionally
+  #     fail to generate: coollabsio/coolify#4646), so stats-db's Postgres
+  #     entrypoint kept refusing to init ("superuser password is not
+  #     specified") — first attempt to fix it by regenerating the var in
+  #     Coolify's UI didn't stick, so stats-db's POSTGRES_PASSWORD is now a
+  #     fixed literal instead (see that service's own comment) and the
+  #     volume bumped again for a guaranteed-clean slate, since a failed
+  #     initdb can still leave stray files behind.
+  blockscout-db-data:
+  stats-db-data-v4:
