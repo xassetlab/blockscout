@@ -7,14 +7,14 @@ version: '3.9'
 # Diferente do backend, o frontend não vive neste repositório — é um repo
 # Next.js separado. Compose/BuildKit suportam um repositório git remoto como
 # `build.context` diretamente (sem precisar de submodule nem de um clone
-# local): o `#v2.11.5` depois da URL fixa a tag, igual ao pin de versão que
+# local): o `#v2.11.4` depois da URL fixa a tag, igual ao pin de versão que
 # backend-source-build.yml já faz para o backend.
 #
 # Build args replicados de .github/workflows/publish-image.yml do frontend (o
 # workflow oficial que publica ghcr.io/blockscout/frontend) — são cosméticos
 # apenas (aparecem no rodapé da UI e em relatos de erro), não afetam
-# comportamento. GIT_COMMIT_SHA é o commit exato da tag v2.11.5
-# (`git ls-remote --tags https://github.com/blockscout/frontend.git v2.11.5`).
+# comportamento. GIT_COMMIT_SHA é o commit exato da tag v2.11.4
+# (`git ls-remote --tags https://github.com/blockscout/frontend.git v2.11.4`).
 #
 # O runtime continua igual ao da imagem pré-compilada: toda a config
 # NEXT_PUBLIC_* (envs/common-frontend.env) é injetada em runtime pelo
@@ -23,11 +23,11 @@ version: '3.9'
 services:
   frontend:
     build:
-      context: https://github.com/blockscout/frontend.git#v2.11.5
+      context: https://github.com/blockscout/frontend.git#v2.11.4
       dockerfile: Dockerfile
       args:
-        GIT_COMMIT_SHA: 'd3c8e66'
-        GIT_TAG: 'v2.11.5'
+        GIT_COMMIT_SHA: '0f3b46f'
+        GIT_TAG: 'v2.11.4'
     pull_policy: build
     restart: always
     container_name: 'frontend'
