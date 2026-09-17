@@ -6,7 +6,7 @@
 # year). Things this project already relies on only exist from v10.0.0+ — e.g.
 # the admin auth (API_SENSITIVE_ENDPOINTS_KEY) only accepts the key via the
 # x-api-key header starting v10.0.0; on v9.0.2 it's query-string-only
-# (?api_key=...). HEAD of this repo is v11.2.1 (see mix.exs).
+# (?api_key=...). HEAD of this repo is v11.3.1 (see mix.exs).
 #
 # This is meant to run as a SEPARATE Coolify resource/instance from the one
 # using coolify.yml — same architecture, but:
