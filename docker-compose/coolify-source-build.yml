@@ -1,5 +1,6 @@
-# Blockscout deployment for Coolify — backend built FROM SOURCE (this repo,
-# docker/Dockerfile) instead of pulled from ghcr.io/blockscout/blockscout.
+# Blockscout deployment for Coolify — backend and frontend built FROM SOURCE
+# instead of pulled from ghcr.io/blockscout/blockscout and
+# ghcr.io/blockscout/frontend.
 #
 # Why: ghcr.io/blockscout/blockscout is stuck at v9.0.2 (no publish in ~1
 # year). Things this project already relies on only exist from v10.0.0+ — e.g.
@@ -10,8 +11,12 @@
 # This is meant to run as a SEPARATE Coolify resource/instance from the one
 # using coolify.yml — same architecture, but:
 #   - backend is built (docker-compose/services/backend-source-build.yml)
-#     instead of pulling a prebuilt image; everything else (frontend,
-#     visualizer, sig-provider, stats) still pulls prebuilt images, unchanged.
+#     from this repo, and frontend is built
+#     (docker-compose/services/frontend-source-build.yml) from
+#     github.com/blockscout/frontend (a separate repo — Compose/BuildKit
+#     support a remote git URL as build.context directly, no submodule
+#     needed); visualizer and sig-provider still pull prebuilt images,
+#     unchanged (no source-build need identified for those yet).
 #   - Domains: use a real domain routed through Cloudflare (or any proxy that
 #     terminates TLS itself), NOT Coolify's auto-generated *.sslip.io ones.
 #     `SERVICE_FQDN_*` below being left bare (no `=value`) works either way —
@@ -180,7 +185,7 @@ services:
     depends_on:
       - backend
     extends:
-      file: ./services/frontend.yml
+      file: ./services/frontend-source-build.yml
       service: frontend
     expose:
       - "3000"

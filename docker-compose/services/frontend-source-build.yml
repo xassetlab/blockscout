@@ -1,0 +1,35 @@
+version: '3.9'
+
+# Variante de services/frontend.yml que builda a imagem a partir do código-fonte
+# do blockscout/frontend (https://github.com/blockscout/frontend) em vez de
+# puxar ghcr.io/blockscout/frontend.
+#
+# Diferente do backend, o frontend não vive neste repositório — é um repo
+# Next.js separado. Compose/BuildKit suportam um repositório git remoto como
+# `build.context` diretamente (sem precisar de submodule nem de um clone
+# local): o `#v2.11.5` depois da URL fixa a tag, igual ao pin de versão que
+# backend-source-build.yml já faz para o backend.
+#
+# Build args replicados de .github/workflows/publish-image.yml do frontend (o
+# workflow oficial que publica ghcr.io/blockscout/frontend) — são cosméticos
+# apenas (aparecem no rodapé da UI e em relatos de erro), não afetam
+# comportamento. GIT_COMMIT_SHA é o commit exato da tag v2.11.5
+# (`git ls-remote --tags https://github.com/blockscout/frontend.git v2.11.5`).
+#
+# O runtime continua igual ao da imagem pré-compilada: toda a config
+# NEXT_PUBLIC_* (envs/common-frontend.env) é injetada em runtime pelo
+# entrypoint.sh da imagem (que gera assets/envs.js no boot do container), não
+# em build time — não precisa virar build arg.
+services:
+  frontend:
+    build:
+      context: https://github.com/blockscout/frontend.git#v2.11.5
+      dockerfile: Dockerfile
+      args:
+        GIT_COMMIT_SHA: 'd3c8e66'
+        GIT_TAG: 'v2.11.5'
+    pull_policy: build
+    restart: always
+    container_name: 'frontend'
+    env_file:
+      -  ../envs/common-frontend.env
